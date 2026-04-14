@@ -1,0 +1,56 @@
+# ── Python / Backend ──────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Base de datos (se crea sola al arrancar)
+backend/*.db
+backend/*.sqlite3
+
+# Variables de entorno con secretos
+backend/.env
+
+# Imágenes subidas por el admin (se generan en producción)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# PDFs de catálogos (son archivos grandes, súbelos manualmente al VPS)
+backend/catalogos/*.pdf
+!backend/catalogos/.gitkeep
+
+# ── Node.js / Frontend ────────────────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Variables de entorno del frontend con secretos
+frontend/.env.local
+frontend/.env.production
+
+# ── Sistema operativo ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editores ──────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Scripts temporales ────────────────────────────────────────────────────────
+download_images.py
+generate_images.py

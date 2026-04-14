@@ -1,0 +1,14 @@
+[Unit]
+Description=No+Humedades Frontend (Next.js)
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/var/www/nohumedades/frontend
+Environment="NEXT_PUBLIC_API_URL=https://TU_DOMINIO.COM"
+ExecStart=/usr/bin/node node_modules/.bin/next start -p 3000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

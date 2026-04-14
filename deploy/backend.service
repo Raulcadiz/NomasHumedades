@@ -1,0 +1,14 @@
+[Unit]
+Description=No+Humedades Backend API (FastAPI)
+After=network.target
+
+[Service]
+User=www-data
+WorkingDirectory=/var/www/nohumedades/backend
+Environment="ALLOWED_ORIGINS=https://TU_DOMINIO.COM"
+ExecStart=/var/www/nohumedades/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

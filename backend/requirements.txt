@@ -1,0 +1,21 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic[email]
+# Base de datos
+sqlalchemy
+# Autenticación segura
+python-jose[cryptography]
+passlib[bcrypt]
+# IA análisis de humedad
+torch
+transformers
+pillow
+# SumUp (HTTP cliente para la API de pago)
+requests
+# Configuración
+python-dotenv
+# Importador de productos desde PDFs de proveedores
+pdfplumber
+# Scraper web para actualizar imágenes desde webs de proveedores
+beautifulsoup4
