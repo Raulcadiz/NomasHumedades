@@ -78,7 +78,7 @@ function ProductEditModal({ product, onSave, onClose, uploading, onUpload }) {
                 border: "1px solid #e5e7eb", borderRadius: "6px", cursor: uploading ? "not-allowed" : "pointer",
                 fontSize: "13px", textAlign: "center", marginBottom: "8px",
               }}>
-                {uploading ? "Subiendo..." : "Subir archivo"}
+                {uploading ? "Subiendo..." : "📁 Subir archivo"}
                 <input type="file" accept="image/*" onChange={handleFile} disabled={uploading} style={{ display: "none" }} />
               </label>
               <input
@@ -163,6 +163,27 @@ function ProductEditModal({ product, onSave, onClose, uploading, onUpload }) {
   );
 }
 
+// ── Tarjeta de estadística ────────────────────────────────────────────────────
+
+function StatCard({ label, value, sub, color = "#1e3a5f", icon }) {
+  return (
+    <div style={{
+      background: "white", borderRadius: "12px", padding: "20px 24px",
+      border: "1px solid #e5e7eb", boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+      flex: "1 1 160px",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <div style={{ fontSize: "13px", color: "#6b7280", marginBottom: "6px" }}>{label}</div>
+          <div style={{ fontSize: "28px", fontWeight: 800, color }}>{value}</div>
+          {sub && <div style={{ fontSize: "12px", color: "#9ca3af", marginTop: "4px" }}>{sub}</div>}
+        </div>
+        <div style={{ fontSize: "28px", opacity: 0.8 }}>{icon}</div>
+      </div>
+    </div>
+  );
+}
+
 // ── Panel de administración ───────────────────────────────────────────────────
 
 export default function Admin() {
@@ -170,14 +191,29 @@ export default function Admin() {
   const [ready, setReady] = useState(false);
   const [products, setProducts] = useState([]);
   const [orders, setOrders] = useState([]);
-  const [activeTab, setActiveTab] = useState("products");
+  const [activeTab, setActiveTab] = useState("dashboard");
   const [uploading, setUploading] = useState(false);
-  const [editProduct, setEditProduct] = useState(null); // producto abierto en modal
+  const [editProduct, setEditProduct] = useState(null);
   const [searchFilter, setSearchFilter] = useState("");
 
   // ── Márgenes ────────────────────────────────────────────────────────────────
   const [margenes, setMargenes] = useState({ Valentine: 0, Kerakoll: 0, Higaltor: 0 });
   const [margenesOk, setMargenesOk] = useState(false);
+
+  // ── Dashboard stats ─────────────────────────────────────────────────────────
+  const [stats, setStats] = useState(null);
+
+  // ── Configuración tienda ─────────────────────────────────────────────────────
+  const [config, setConfig] = useState({
+    tienda_nombre: "", tienda_telefono: "", tienda_ciudad: "",
+    tienda_direccion: "", tienda_horario: "", iban: "",
+    email_admin: "", smtp_host: "", smtp_port: "", smtp_user: "",
+    smtp_password: "", email_from: "",
+    envio_gratis_desde: "", precio_envio_estandar: "", precio_envio_pesado: "",
+  });
+  const [configOk, setConfigOk] = useState(false);
+  const [ibanVisible, setIbanVisible] = useState(false);
+  const [smtpPassVisible, setSmtpPassVisible] = useState(false);
 
   // ── PDF import ──────────────────────────────────────────────────────────────
   const [importMarca, setImportMarca] = useState("todos");
@@ -185,6 +221,8 @@ export default function Admin() {
   const [importPreview, setImportPreview] = useState(null);
   const [importSel, setImportSel] = useState({});
   const [importResult, setImportResult] = useState(null);
+  const [pdfList, setPdfList] = useState([]);
+  const [uploadingPdf, setUploadingPdf] = useState(false);
 
   // ── Scraper web ─────────────────────────────────────────────────────────────
   const [scraperMarca, setScraperMarca] = useState("todas");
@@ -220,6 +258,21 @@ export default function Admin() {
     if (res.ok) setImgEstado(await res.json());
   }, []);
 
+  const loadStats = useCallback(async () => {
+    const res = await apiFetch("/api/admin/stats");
+    if (res.ok) setStats(await res.json());
+  }, []);
+
+  const loadConfig = useCallback(async () => {
+    const res = await apiFetch("/api/admin/configuracion");
+    if (res.ok) setConfig(c => ({ ...c, ...await res.json() }));
+  }, []);
+
+  const loadPdfList = useCallback(async () => {
+    const res = await apiFetch("/api/admin/pdfs");
+    if (res.ok) setPdfList(await res.json());
+  }, []);
+
   // ── Auth check ───────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!isLoggedIn() || !isAdmin()) {
@@ -231,6 +284,9 @@ export default function Admin() {
     loadOrders();
     loadMargenes();
     loadImgEstado();
+    loadStats();
+    loadConfig();
+    loadPdfList();
   }, []);
 
   // ── Imagen upload ────────────────────────────────────────────────────────────
@@ -284,6 +340,7 @@ export default function Admin() {
     const res = await apiFetch(`/api/admin/productos/${productId}`, { method: "DELETE" });
     if (res.ok || res.status === 204) {
       await loadProducts();
+      await loadStats();
     } else {
       alert("Error al eliminar");
     }
@@ -296,6 +353,7 @@ export default function Admin() {
     });
     if (res.ok) {
       await loadProducts();
+      await loadStats();
       setActiveTab("products");
       setNewProduct({
         id: "", nombre: "", marca: "Valentine", categoria: "pinturas",
@@ -311,6 +369,7 @@ export default function Admin() {
   const updateOrderStatus = async (orderId, estado) => {
     await apiFetch(`/api/admin/pedidos/${orderId}/estado?estado=${estado}`, { method: "PUT" });
     await loadOrders();
+    await loadStats();
   };
 
   // ── Márgenes ─────────────────────────────────────────────────────────────────
@@ -324,6 +383,49 @@ export default function Admin() {
       setTimeout(() => setMargenesOk(false), 3000);
     } else {
       alert("Error al guardar márgenes");
+    }
+  };
+
+  // ── Configuración ────────────────────────────────────────────────────────────
+  const saveConfig = async () => {
+    const res = await apiFetch("/api/admin/configuracion", {
+      method: "PUT",
+      body: JSON.stringify(config),
+    });
+    if (res.ok) {
+      setConfigOk(true);
+      setTimeout(() => setConfigOk(false), 3000);
+    } else {
+      alert("Error al guardar configuración");
+    }
+  };
+
+  // ── Subir PDF ────────────────────────────────────────────────────────────────
+  const handlePdfUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploadingPdf(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await apiFetch("/api/admin/upload-pdf", {
+        method: "POST",
+        headers: {},
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`✅ PDF subido: ${data.filename} (${data.size_mb} MB)`);
+        await loadPdfList();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Error al subir el PDF");
+      }
+    } catch {
+      alert("Error al subir el PDF");
+    } finally {
+      setUploadingPdf(false);
+      e.target.value = "";
     }
   };
 
@@ -361,6 +463,7 @@ export default function Admin() {
       setImportResult(data);
       setImportPreview(null);
       await loadProducts();
+      await loadStats();
     } else {
       const err = await res.json().catch(() => ({}));
       alert(err.detail || "Error al importar");
@@ -405,7 +508,6 @@ export default function Admin() {
     );
   }
 
-  // ── Productos filtrados ───────────────────────────────────────────────────────
   const filteredProducts = searchFilter
     ? products.filter(p =>
         p.nombre.toLowerCase().includes(searchFilter.toLowerCase()) ||
@@ -454,14 +556,16 @@ export default function Admin() {
         </div>
 
         {/* Tabs */}
-        <div className="tabs" style={{ marginBottom: "24px" }}>
+        <div className="tabs" style={{ marginBottom: "24px", flexWrap: "wrap" }}>
           {[
-            ["products", "Productos"],
-            ["orders", "Pedidos"],
-            ["margenes", "Márgenes"],
-            ["importar", "Importar PDFs"],
-            ["scraper", "Actualizar Web"],
-            ["add", "Añadir Producto"],
+            ["dashboard",  "📊 Dashboard"],
+            ["products",   "📦 Productos"],
+            ["orders",     "🛒 Pedidos"],
+            ["margenes",   "💰 Márgenes"],
+            ["importar",   "📄 Importar PDFs"],
+            ["scraper",    "🌐 Actualizar Web"],
+            ["config",     "⚙️ Configuración"],
+            ["add",        "➕ Añadir Producto"],
           ].map(([key, label]) => (
             <button
               key={key}
@@ -472,6 +576,84 @@ export default function Admin() {
             </button>
           ))}
         </div>
+
+        {/* ── DASHBOARD ── */}
+        {activeTab === "dashboard" && (
+          <div>
+            {stats ? (
+              <>
+                {/* Tarjetas de resumen */}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "16px", marginBottom: "28px" }}>
+                  <StatCard label="Productos en catálogo" value={stats.total_products} icon="📦" color="#1e3a5f" />
+                  <StatCard label="Pedidos totales" value={stats.total_orders} icon="🛒" color="#2563eb" />
+                  <StatCard label="Pedidos hoy" value={stats.orders_today} icon="📅" color="#7c3aed" />
+                  <StatCard label="Ingresos este mes" value={`${stats.revenue_month.toFixed(2)} €`} icon="💰" color="#059669"
+                    sub="pedidos pagados/enviados/entregados" />
+                  <StatCard label="Pendientes de pago" value={stats.pending_orders} icon="⏳"
+                    color={stats.pending_orders > 0 ? "#d97706" : "#6b7280"} />
+                  <StatCard label="Sin imagen" value={stats.products_sin_imagen} icon="🖼️"
+                    color={stats.products_sin_imagen > 0 ? "#ef4444" : "#059669"} sub="productos" />
+                </div>
+
+                {/* Pedidos por estado */}
+                <div className="card" style={{ padding: "24px" }}>
+                  <h3 style={{ margin: "0 0 20px", fontSize: "16px", fontWeight: 700 }}>Estado de los pedidos</h3>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "12px" }}>
+                    {Object.entries(stats.orders_by_estado).map(([estado, count]) => (
+                      <div key={estado} style={{
+                        padding: "12px 20px", borderRadius: "10px", minWidth: "110px", textAlign: "center",
+                        background: `${STATE_COLOR[estado]}15`, border: `1px solid ${STATE_COLOR[estado]}40`,
+                      }}>
+                        <div style={{ fontSize: "24px", fontWeight: 800, color: STATE_COLOR[estado] }}>{count}</div>
+                        <div style={{ fontSize: "12px", color: "#6b7280", textTransform: "capitalize", marginTop: "4px" }}>{estado}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Imágenes por marca */}
+                {imgEstado && (
+                  <div className="card" style={{ padding: "24px", marginTop: "16px" }}>
+                    <h3 style={{ margin: "0 0 20px", fontSize: "16px", fontWeight: 700 }}>Imágenes de productos por marca</h3>
+                    <div style={{ display: "flex", gap: "16px", flexWrap: "wrap" }}>
+                      {Object.entries(imgEstado).map(([marca, s]) => {
+                        const pct = s.total > 0 ? Math.round((s.con_imagen / s.total) * 100) : 0;
+                        const bc = BRAND_BG[marca] || BRAND_BG.Varios;
+                        return (
+                          <div key={marca} style={{ flex: "1 1 180px", background: "#f8fafc", borderRadius: "10px", padding: "16px", border: "1px solid #e5e7eb" }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
+                              <span style={{ background: bc.bg, color: bc.color, padding: "2px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: 700 }}>{marca}</span>
+                              <span style={{ fontSize: "13px", fontWeight: 700, color: pct === 100 ? "#059669" : "#374151" }}>{pct}%</span>
+                            </div>
+                            <div style={{ height: "8px", background: "#e5e7eb", borderRadius: "4px", overflow: "hidden", marginBottom: "8px" }}>
+                              <div style={{ height: "100%", width: `${pct}%`, background: BRAND_COLOR[marca], borderRadius: "4px", transition: "width 0.5s" }} />
+                            </div>
+                            <div style={{ fontSize: "13px", color: "#374151" }}>
+                              <strong>{s.con_imagen}</strong>/{s.total} con imagen
+                              {s.sin_imagen > 0 && <span style={{ color: "#f59e0b", marginLeft: "6px" }}>({s.sin_imagen} faltan)</span>}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <button onClick={refrescarEstadoImagenes} style={{ marginTop: "16px", padding: "8px 16px", border: "1px solid #e5e7eb", borderRadius: "6px", background: "white", cursor: "pointer", fontSize: "13px" }}>
+                      Refrescar
+                    </button>
+                  </div>
+                )}
+
+                <div style={{ marginTop: "16px", textAlign: "right" }}>
+                  <button onClick={() => { loadStats(); loadImgEstado(); }}
+                    style={{ padding: "8px 18px", border: "1px solid #e5e7eb", borderRadius: "8px", background: "white", cursor: "pointer", fontSize: "13px" }}>
+                    🔄 Actualizar dashboard
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ textAlign: "center", padding: "40px", color: "#9ca3af" }}>Cargando estadísticas…</div>
+            )}
+          </div>
+        )}
 
         {/* ── PRODUCTOS ── */}
         {activeTab === "products" && (
@@ -509,7 +691,7 @@ export default function Admin() {
                         <td style={{ padding: "10px 16px" }}>
                           <div style={{
                             width: "52px", height: "52px", borderRadius: "6px",
-                            overflow: "hidden", background: "#f3f4f6", flexShrink: 0,
+                            overflow: "hidden", background: "#f3f4f6",
                             border: hasRealImage ? "none" : "2px dashed #e5e7eb",
                           }}>
                             <img
@@ -527,11 +709,7 @@ export default function Admin() {
                           </div>
                         </td>
                         <td style={{ padding: "10px 16px" }}>
-                          <span style={{
-                            background: bc.bg, color: bc.color,
-                            padding: "3px 10px", borderRadius: "20px",
-                            fontSize: "11px", fontWeight: 700,
-                          }}>
+                          <span style={{ background: bc.bg, color: bc.color, padding: "3px 10px", borderRadius: "20px", fontSize: "11px", fontWeight: 700 }}>
                             {product.marca}
                           </span>
                           {product.destacado && (
@@ -547,21 +725,13 @@ export default function Admin() {
                         <td style={{ padding: "10px 16px", textAlign: "center" }}>
                           <button
                             onClick={() => setEditProduct(product)}
-                            style={{
-                              padding: "5px 12px", background: "#1e3a5f", color: "white",
-                              border: "none", borderRadius: "5px", cursor: "pointer",
-                              fontSize: "12px", fontWeight: 600, marginRight: "6px",
-                            }}
+                            style={{ padding: "5px 12px", background: "#1e3a5f", color: "white", border: "none", borderRadius: "5px", cursor: "pointer", fontSize: "12px", fontWeight: 600, marginRight: "6px" }}
                           >
                             Editar
                           </button>
                           <button
                             onClick={() => deleteProduct(product.id)}
-                            style={{
-                              padding: "5px 10px", background: "white", color: "#ef4444",
-                              border: "1px solid #ef4444", borderRadius: "5px",
-                              cursor: "pointer", fontSize: "12px",
-                            }}
+                            style={{ padding: "5px 10px", background: "white", color: "#ef4444", border: "1px solid #ef4444", borderRadius: "5px", cursor: "pointer", fontSize: "12px" }}
                           >
                             ✕
                           </button>
@@ -598,18 +768,12 @@ export default function Admin() {
               <tbody>
                 {orders.map((order) => (
                   <tr key={order.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                    <td style={{ padding: "10px 16px", fontSize: "12px", color: "#6b7280" }}>
-                      {order.id.substring(0, 8)}…
-                    </td>
+                    <td style={{ padding: "10px 16px", fontSize: "12px", color: "#6b7280" }}>{order.id.substring(0, 8)}…</td>
                     <td style={{ padding: "10px 16px", fontSize: "13px" }}>{order.user_email}</td>
+                    <td style={{ padding: "10px 16px", fontSize: "12px" }}>{new Date(order.fecha).toLocaleDateString("es-ES")}</td>
+                    <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 700 }}>{order.total.toFixed(2)} €</td>
                     <td style={{ padding: "10px 16px", fontSize: "12px" }}>
-                      {new Date(order.fecha).toLocaleDateString("es-ES")}
-                    </td>
-                    <td style={{ padding: "10px 16px", textAlign: "right", fontWeight: 700 }}>
-                      {order.total.toFixed(2)} €
-                    </td>
-                    <td style={{ padding: "10px 16px", fontSize: "12px" }}>
-                      {order.direccion_envio === "RECOGIDA EN TIENDA" ? "🏪 Recogida" : `🚚 Envío`}
+                      {order.direccion_envio === "RECOGIDA EN TIENDA" ? "🏪 Recogida" : "🚚 Envío"}
                     </td>
                     <td style={{ padding: "10px 16px", fontSize: "12px" }}>
                       {order.metodo_pago === "transferencia" ? "🏦 Transf." : "💳 SumUp"}
@@ -656,19 +820,14 @@ export default function Admin() {
                 return (
                   <div key={marca} style={{ marginBottom: "20px", padding: "16px", background: "#f8fafc", borderRadius: "10px", border: "1px solid #e5e7eb" }}>
                     <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
-                      <span style={{ background: bc.bg, color: bc.color, padding: "3px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 700 }}>
-                        {marca}
-                      </span>
+                      <span style={{ background: bc.bg, color: bc.color, padding: "3px 12px", borderRadius: "20px", fontSize: "12px", fontWeight: 700 }}>{marca}</span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                       <input
                         type="number" min="0" max="500" step="0.5"
                         value={margenes[marca] ?? 0}
                         onChange={(e) => setMargenes(m => ({ ...m, [marca]: parseFloat(e.target.value) || 0 }))}
-                        style={{
-                          width: "90px", padding: "10px 12px", border: "2px solid #e5e7eb",
-                          borderRadius: "8px", fontSize: "18px", fontWeight: 700, textAlign: "right",
-                        }}
+                        style={{ width: "90px", padding: "10px 12px", border: "2px solid #e5e7eb", borderRadius: "8px", fontSize: "18px", fontWeight: 700, textAlign: "right" }}
                       />
                       <span style={{ fontSize: "18px", fontWeight: 700, color: "#374151" }}>%</span>
                       {ejemplo && (
@@ -685,21 +844,10 @@ export default function Admin() {
               })}
 
               <div style={{ display: "flex", gap: "12px", alignItems: "center", marginTop: "8px" }}>
-                <button
-                  onClick={saveMargenes}
-                  style={{
-                    padding: "10px 24px", background: "#1e3a5f", color: "white",
-                    border: "none", borderRadius: "8px", cursor: "pointer",
-                    fontSize: "14px", fontWeight: 700,
-                  }}
-                >
+                <button onClick={saveMargenes} style={{ padding: "10px 24px", background: "#1e3a5f", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "14px", fontWeight: 700 }}>
                   Guardar Márgenes
                 </button>
-                {margenesOk && (
-                  <span style={{ color: "#059669", fontWeight: 700, fontSize: "14px" }}>
-                    ✓ Guardado correctamente
-                  </span>
-                )}
+                {margenesOk && <span style={{ color: "#059669", fontWeight: 700, fontSize: "14px" }}>✓ Guardado correctamente</span>}
               </div>
             </div>
           </div>
@@ -709,10 +857,41 @@ export default function Admin() {
         {activeTab === "importar" && (
           <div className="card" style={{ padding: "28px" }}>
             <h3 style={{ marginTop: 0, marginBottom: "8px" }}>Importar Productos desde PDFs</h3>
-            <p style={{ color: "#6b7280", marginBottom: "24px", fontSize: "14px" }}>
-              Extrae productos de las tarifas en <code>backend/catalogos/</code>. Revisa antes de confirmar.
+            <p style={{ color: "#6b7280", marginBottom: "20px", fontSize: "14px" }}>
+              Sube aquí los PDFs de tarifas de Valentine, Kerakoll o Higaltor y luego impórtalos a la base de datos.
             </p>
 
+            {/* Subir PDF */}
+            <div style={{ background: "#f8fafc", border: "1px solid #e5e7eb", borderRadius: "10px", padding: "20px", marginBottom: "24px" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: "14px", fontWeight: 700 }}>📤 Subir nuevo PDF de tarifa</h4>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px", flexWrap: "wrap" }}>
+                <label style={{
+                  padding: "10px 20px", background: uploadingPdf ? "#9ca3af" : "#1e3a5f",
+                  color: "white", borderRadius: "8px", cursor: uploadingPdf ? "not-allowed" : "pointer",
+                  fontSize: "14px", fontWeight: 600,
+                }}>
+                  {uploadingPdf ? "Subiendo…" : "Seleccionar PDF"}
+                  <input type="file" accept=".pdf" onChange={handlePdfUpload} disabled={uploadingPdf} style={{ display: "none" }} />
+                </label>
+                <span style={{ fontSize: "13px", color: "#6b7280" }}>Máx. 50 MB</span>
+              </div>
+
+              {/* PDFs disponibles */}
+              {pdfList.length > 0 && (
+                <div style={{ marginTop: "14px" }}>
+                  <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "6px", color: "#374151" }}>PDFs disponibles en el servidor:</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "8px" }}>
+                    {pdfList.map(pdf => (
+                      <span key={pdf.filename} style={{ background: "#e0e7ff", color: "#3730a3", padding: "4px 12px", borderRadius: "20px", fontSize: "12px" }}>
+                        📄 {pdf.filename} ({pdf.size_mb} MB)
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Seleccionar marca e importar */}
             <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "24px", flexWrap: "wrap" }}>
               <select
                 value={importMarca}
@@ -724,11 +903,7 @@ export default function Admin() {
                 <option value="kerakoll">Kerakoll</option>
                 <option value="higaltor">Higaltor</option>
               </select>
-              <button
-                className="btn btn-primary"
-                onClick={previewImport}
-                disabled={importLoading}
-              >
+              <button className="btn btn-primary" onClick={previewImport} disabled={importLoading}>
                 {importLoading ? "Analizando PDFs…" : "Previsualizar"}
               </button>
             </div>
@@ -828,7 +1003,6 @@ export default function Admin() {
                 y la descarga al servidor. El proceso se ejecuta en segundo plano y puede tardar varios minutos.
               </p>
 
-              {/* Estado actual de imágenes */}
               {imgEstado && (
                 <div style={{ display: "flex", gap: "12px", marginBottom: "24px", flexWrap: "wrap" }}>
                   {Object.entries(imgEstado).map(([marca, stats]) => {
@@ -845,9 +1019,7 @@ export default function Admin() {
                             <strong>{stats.con_imagen}</strong>/{stats.total} con imagen ({pct}%)
                           </div>
                           {stats.sin_imagen > 0 && (
-                            <div style={{ fontSize: "12px", color: "#f59e0b", fontWeight: 600 }}>
-                              {stats.sin_imagen} sin imagen
-                            </div>
+                            <div style={{ fontSize: "12px", color: "#f59e0b", fontWeight: 600 }}>{stats.sin_imagen} sin imagen</div>
                           )}
                         </div>
                       </div>
@@ -856,15 +1028,11 @@ export default function Admin() {
                 </div>
               )}
 
-              {/* Controles */}
               <div style={{ display: "flex", gap: "14px", alignItems: "flex-end", flexWrap: "wrap" }}>
                 <div>
                   <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", fontSize: "13px" }}>Marca</label>
-                  <select
-                    value={scraperMarca}
-                    onChange={(e) => setScraperMarca(e.target.value)}
-                    style={{ padding: "9px 14px", border: "1px solid #e5e7eb", borderRadius: "8px", fontSize: "14px" }}
-                  >
+                  <select value={scraperMarca} onChange={(e) => setScraperMarca(e.target.value)}
+                    style={{ padding: "9px 14px", border: "1px solid #e5e7eb", borderRadius: "8px", fontSize: "14px" }}>
                     <option value="todas">Todas las marcas</option>
                     <option value="Valentine">Valentine</option>
                     <option value="Kerakoll">Kerakoll</option>
@@ -873,34 +1041,21 @@ export default function Admin() {
                 </div>
                 <div>
                   <label style={{ display: "flex", alignItems: "center", gap: "8px", cursor: "pointer", padding: "9px 0" }}>
-                    <input
-                      type="checkbox" checked={scraperSoloSin}
-                      onChange={(e) => setScraperSoloSin(e.target.checked)}
-                      style={{ width: "16px", height: "16px" }}
-                    />
+                    <input type="checkbox" checked={scraperSoloSin} onChange={(e) => setScraperSoloSin(e.target.checked)} style={{ width: "16px", height: "16px" }} />
                     <span style={{ fontWeight: 600, fontSize: "13px" }}>Solo productos sin imagen</span>
                   </label>
                 </div>
-                <button
-                  onClick={lanzarScraper}
-                  disabled={scraperLoading}
-                  style={{
-                    padding: "10px 22px", background: scraperLoading ? "#9ca3af" : "#059669",
-                    color: "white", border: "none", borderRadius: "8px",
-                    cursor: scraperLoading ? "not-allowed" : "pointer",
-                    fontSize: "14px", fontWeight: 700,
-                  }}
-                >
+                <button onClick={lanzarScraper} disabled={scraperLoading} style={{
+                  padding: "10px 22px", background: scraperLoading ? "#9ca3af" : "#059669",
+                  color: "white", border: "none", borderRadius: "8px",
+                  cursor: scraperLoading ? "not-allowed" : "pointer", fontSize: "14px", fontWeight: 700,
+                }}>
                   {scraperLoading ? "Iniciando…" : "Actualizar imágenes"}
                 </button>
-                <button
-                  onClick={refrescarEstadoImagenes}
-                  style={{
-                    padding: "10px 16px", background: "white", color: "#374151",
-                    border: "1px solid #e5e7eb", borderRadius: "8px",
-                    cursor: "pointer", fontSize: "13px",
-                  }}
-                >
+                <button onClick={refrescarEstadoImagenes} style={{
+                  padding: "10px 16px", background: "white", color: "#374151",
+                  border: "1px solid #e5e7eb", borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+                }}>
                   Refrescar estado
                 </button>
               </div>
@@ -923,6 +1078,136 @@ export default function Admin() {
                 también puedes editar cada producto manualmente (pestaña Productos → Editar) y pegar la URL
                 de la imagen desde la web del fabricante.
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── CONFIGURACIÓN ── */}
+        {activeTab === "config" && (
+          <div style={{ maxWidth: "680px" }}>
+
+            {/* Datos de la tienda */}
+            <div className="card" style={{ padding: "28px", marginBottom: "20px" }}>
+              <h3 style={{ marginTop: 0, marginBottom: "20px", fontSize: "17px" }}>🏪 Datos de la tienda</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                {[
+                  ["tienda_nombre",    "Nombre de la tienda",     "text"],
+                  ["tienda_telefono",  "Teléfono",                "text"],
+                  ["tienda_ciudad",    "Ciudad",                  "text"],
+                  ["tienda_direccion", "Dirección",               "text"],
+                  ["tienda_horario",   "Horario de atención",     "text"],
+                ].map(([key, label, type]) => (
+                  <div key={key} style={key === "tienda_horario" || key === "tienda_direccion" ? { gridColumn: "1 / -1" } : {}}>
+                    <label style={{ display: "block", fontWeight: 600, marginBottom: "5px", fontSize: "13px" }}>{label}</label>
+                    <input
+                      type={type} value={config[key] || ""}
+                      onChange={(e) => setConfig(c => ({ ...c, [key]: e.target.value }))}
+                      style={{ width: "100%", padding: "9px 12px", border: "1px solid #e5e7eb", borderRadius: "7px", fontSize: "14px", boxSizing: "border-box" }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Datos bancarios */}
+            <div className="card" style={{ padding: "28px", marginBottom: "20px", border: "2px solid #fde68a", background: "#fffbeb" }}>
+              <h3 style={{ marginTop: 0, marginBottom: "8px", fontSize: "17px" }}>🏦 Datos bancarios</h3>
+              <p style={{ color: "#92400e", fontSize: "13px", marginBottom: "16px" }}>
+                El IBAN se almacena <strong>cifrado</strong> en la base de datos. Solo se muestra al cliente en la página del pedido.
+              </p>
+              <label style={{ display: "block", fontWeight: 600, marginBottom: "5px", fontSize: "13px" }}>IBAN</label>
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <input
+                  type={ibanVisible ? "text" : "password"}
+                  value={config.iban || ""}
+                  onChange={(e) => setConfig(c => ({ ...c, iban: e.target.value }))}
+                  placeholder="ES00 0000 0000 0000 0000 0000"
+                  style={{ flex: 1, padding: "9px 12px", border: "1px solid #fbbf24", borderRadius: "7px", fontSize: "14px", background: "white" }}
+                />
+                <button onClick={() => setIbanVisible(v => !v)} style={{
+                  padding: "9px 14px", border: "1px solid #e5e7eb", borderRadius: "7px",
+                  background: "white", cursor: "pointer", fontSize: "13px", whiteSpace: "nowrap",
+                }}>
+                  {ibanVisible ? "🙈 Ocultar" : "👁 Ver"}
+                </button>
+              </div>
+            </div>
+
+            {/* Email y SMTP */}
+            <div className="card" style={{ padding: "28px", marginBottom: "20px" }}>
+              <h3 style={{ marginTop: 0, marginBottom: "20px", fontSize: "17px" }}>📧 Email y notificaciones</h3>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                {[
+                  ["email_admin", "Email de notificaciones (admin)", "text"],
+                  ["email_from",  "Remitente (From)",                "text"],
+                  ["smtp_host",   "Servidor SMTP",                   "text"],
+                  ["smtp_port",   "Puerto SMTP",                     "text"],
+                  ["smtp_user",   "Usuario SMTP",                    "text"],
+                ].map(([key, label, type]) => (
+                  <div key={key} style={key === "email_admin" || key === "email_from" ? { gridColumn: "1 / -1" } : {}}>
+                    <label style={{ display: "block", fontWeight: 600, marginBottom: "5px", fontSize: "13px" }}>{label}</label>
+                    <input
+                      type={type} value={config[key] || ""}
+                      onChange={(e) => setConfig(c => ({ ...c, [key]: e.target.value }))}
+                      style={{ width: "100%", padding: "9px 12px", border: "1px solid #e5e7eb", borderRadius: "7px", fontSize: "14px", boxSizing: "border-box" }}
+                    />
+                  </div>
+                ))}
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ display: "block", fontWeight: 600, marginBottom: "5px", fontSize: "13px" }}>
+                    Contraseña SMTP <span style={{ fontWeight: 400, color: "#9ca3af", fontSize: "12px" }}>(cifrada)</span>
+                  </label>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <input
+                      type={smtpPassVisible ? "text" : "password"}
+                      value={config.smtp_password || ""}
+                      onChange={(e) => setConfig(c => ({ ...c, smtp_password: e.target.value }))}
+                      placeholder="Contraseña de aplicación Gmail..."
+                      style={{ flex: 1, padding: "9px 12px", border: "1px solid #e5e7eb", borderRadius: "7px", fontSize: "14px" }}
+                    />
+                    <button onClick={() => setSmtpPassVisible(v => !v)} style={{
+                      padding: "9px 14px", border: "1px solid #e5e7eb", borderRadius: "7px",
+                      background: "white", cursor: "pointer", fontSize: "13px",
+                    }}>
+                      {smtpPassVisible ? "🙈" : "👁"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Tarifas de envío */}
+            <div className="card" style={{ padding: "28px", marginBottom: "20px" }}>
+              <h3 style={{ marginTop: 0, marginBottom: "8px", fontSize: "17px" }}>🚚 Tarifas de envío</h3>
+              <p style={{ color: "#6b7280", fontSize: "13px", marginBottom: "20px" }}>Valores en euros. Los cambios se aplican a nuevos pedidos.</p>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "16px" }}>
+                {[
+                  ["envio_gratis_desde",    "Gratis desde (€)"],
+                  ["precio_envio_estandar", "Envío estándar (€)"],
+                  ["precio_envio_pesado",   "Envío pesado (€)"],
+                ].map(([key, label]) => (
+                  <div key={key}>
+                    <label style={{ display: "block", fontWeight: 600, marginBottom: "5px", fontSize: "13px" }}>{label}</label>
+                    <input
+                      type="number" step="0.01" value={config[key] || ""}
+                      onChange={(e) => setConfig(c => ({ ...c, [key]: e.target.value }))}
+                      style={{ width: "100%", padding: "9px 12px", border: "1px solid #e5e7eb", borderRadius: "7px", fontSize: "16px", fontWeight: 700, boxSizing: "border-box" }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Guardar */}
+            <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
+              <button onClick={saveConfig} style={{
+                padding: "12px 28px", background: "#1e3a5f", color: "white",
+                border: "none", borderRadius: "8px", cursor: "pointer",
+                fontSize: "15px", fontWeight: 700,
+              }}>
+                Guardar toda la configuración
+              </button>
+              {configOk && <span style={{ color: "#059669", fontWeight: 700, fontSize: "14px" }}>✓ Configuración guardada</span>}
             </div>
           </div>
         )}
@@ -976,7 +1261,7 @@ export default function Admin() {
                 <label>Imagen del producto</label>
                 <div style={{ display: "flex", gap: "10px", alignItems: "center", marginBottom: "8px" }}>
                   <label style={{ padding: "8px 14px", background: "#f3f4f6", border: "1px solid #e5e7eb", borderRadius: "6px", cursor: "pointer", fontSize: "13px" }}>
-                    {uploading ? "Subiendo..." : "Subir archivo"}
+                    {uploading ? "Subiendo..." : "📁 Subir archivo"}
                     <input type="file" accept="image/*" onChange={async (e) => {
                       const url = await handleImageUpload(e.target.files[0]);
                       if (url) setNewProduct(p => ({ ...p, imagen: url }));

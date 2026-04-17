@@ -19,3 +19,5 @@ python-dotenv
 pdfplumber
 # Scraper web para actualizar imágenes desde webs de proveedores
 beautifulsoup4
+# Cifrado simétrico para datos sensibles (IBAN, contraseñas SMTP)
+cryptography

@@ -118,3 +118,12 @@ class BrandMargin(Base):
 
     marca = Column(String, primary_key=True)  # 'Valentine' | 'Kerakoll' | 'Higaltor'
     margen = Column(Float, nullable=False, default=0.0)  # % p.ej. 25.0 = +25%
+
+
+class StoreSetting(Base):
+    """Configuración editable de la tienda. Campos sensibles (IBAN, SMTP) se almacenan cifrados."""
+    __tablename__ = "store_settings"
+
+    key = Column(String, primary_key=True)
+    value = Column(Text, nullable=True, default="")
+    encrypted = Column(Boolean, default=False)  # True → valor cifrado con Fernet

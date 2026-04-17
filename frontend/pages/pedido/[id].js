@@ -20,10 +20,19 @@ export default function OrderDetail() {
   const [order, setOrder] = useState(null);
   const [loading, setLoading] = useState(true);
   const [ibanVisible, setIbanVisible] = useState(false);
+  const [tiendaInfo, setTiendaInfo] = useState({ iban: "", telefono: "", nombre: "NomasHumedades" });
 
-  // Leemos IBAN y teléfono de las variables de entorno del frontend
-  const IBAN = process.env.NEXT_PUBLIC_IBAN || "ES00 0000 0000 0000 0000 0000";
-  const TELEFONO = process.env.NEXT_PUBLIC_TELEFONO || "+34 956 XXX XXX";
+  useEffect(() => {
+    // Carga los datos de la tienda (IBAN, teléfono) desde la API
+    fetch(`${process.env.NEXT_PUBLIC_API_URL || ""}/api/tienda/info`)
+      .then(r => r.ok ? r.json() : {})
+      .then(d => setTiendaInfo(prev => ({ ...prev, ...d })))
+      .catch(() => {});
+  }, []);
+
+  // Fallbacks desde env vars (por compatibilidad)
+  const IBAN = tiendaInfo.iban || process.env.NEXT_PUBLIC_IBAN || "ES00 0000 0000 0000 0000 0000";
+  const TELEFONO = tiendaInfo.telefono || process.env.NEXT_PUBLIC_TELEFONO || "+34 956 XXX XXX";
 
   useEffect(() => {
     if (!isLoggedIn()) {

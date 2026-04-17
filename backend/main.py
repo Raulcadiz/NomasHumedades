@@ -2,7 +2,9 @@ import logging
 import os
 import uuid
 
+import re as _re
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from sqlalchemy import func
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,7 +22,8 @@ from auth import (
 )
 from database import Base, SessionLocal, engine, get_db
 from email_service import enviar_cambio_estado, enviar_confirmacion_pedido, enviar_notificacion_admin
-from models import BrandMargin, CartItem, Order, OrderItem, Product, User
+from models import BrandMargin, CartItem, Order, OrderItem, Product, StoreSetting, User
+from encryption import encrypt_if_sensitive, decrypt_if_encrypted
 from pricing import calculate_price
 from seed_data import HUMIDITY_RECOMMENDATIONS, SEED_CATEGORIES, SEED_PRODUCTS
 from shipping import calcular_envio, info_tarifas
@@ -75,6 +78,7 @@ def startup():
     try:
         _seed_admin(db)
         _seed_products(db)
+        _seed_settings(db)
         db.commit()
         logger.info("Base de datos inicializada correctamente.")
     except Exception as exc:
@@ -97,6 +101,34 @@ def _seed_admin(db: Session):
         )
         db.add(admin)
         logger.info(f"Usuario admin creado: {admin_email}")
+
+
+_DEFAULT_SETTINGS = {
+    "tienda_nombre":          (os.getenv("TIENDA_NOMBRE", "NomasHumedades"), False),
+    "tienda_telefono":        (os.getenv("TIENDA_TELEFONO", "+34 683 144 491"), False),
+    "tienda_ciudad":          ("Chiclana de la Frontera, Cádiz", False),
+    "tienda_direccion":       ("", False),
+    "tienda_horario":         ("Lunes a Viernes: 9:00 - 18:00", False),
+    "iban":                   (os.getenv("IBAN", ""), True),   # cifrado
+    "email_admin":            (os.getenv("EMAIL_ADMIN", ""), False),
+    "smtp_host":              (os.getenv("SMTP_HOST", "smtp.gmail.com"), False),
+    "smtp_port":              (os.getenv("SMTP_PORT", "587"), False),
+    "smtp_user":              (os.getenv("SMTP_USER", ""), False),
+    "smtp_password":          (os.getenv("SMTP_PASSWORD", ""), True),  # cifrado
+    "email_from":             (os.getenv("EMAIL_FROM", ""), False),
+    "envio_gratis_desde":     ("150", False),
+    "precio_envio_estandar":  ("9.95", False),
+    "precio_envio_pesado":    ("18.50", False),
+}
+
+
+def _seed_settings(db: Session):
+    """Crea los ajustes con valores por defecto si no existen."""
+    from encryption import encrypt
+    for key, (default_val, is_encrypted) in _DEFAULT_SETTINGS.items():
+        if not db.query(StoreSetting).filter(StoreSetting.key == key).first():
+            stored = encrypt(default_val) if (is_encrypted and default_val) else default_val
+            db.add(StoreSetting(key=key, value=stored, encrypted=is_encrypted))
 
 
 def _seed_products(db: Session):
@@ -1248,6 +1280,172 @@ def admin_actualizar_imagenes(
         "mensaje": f"Actualización iniciada en segundo plano para {len(productos_a_procesar)} productos",
         "total": len(productos_a_procesar),
     }
+
+
+# ── Admin — Estadísticas del panel ───────────────────────────────────────────
+@app.get("/api/admin/stats")
+def admin_stats(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Resumen ejecutivo: productos, pedidos, ingresos del mes, etc."""
+    from datetime import datetime
+
+    total_products = db.query(Product).count()
+    total_orders = db.query(Order).count()
+
+    today = datetime.utcnow().date()
+    orders_today = db.query(Order).filter(
+        Order.fecha >= datetime(today.year, today.month, today.day, 0, 0, 0)
+    ).count()
+
+    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    revenue_month = db.query(func.sum(Order.total)).filter(
+        Order.fecha >= month_start,
+        Order.estado.in_(["pagado", "preparando", "enviado", "entregado"]),
+    ).scalar() or 0.0
+
+    pending = db.query(Order).filter(Order.estado == "pendiente").count()
+
+    PLACEHOLDER = {"/img/placeholder.jpg", "/img/placeholder.svg", "", None}
+    sin_imagen = sum(1 for p in db.query(Product).all() if p.imagen in PLACEHOLDER)
+
+    orders_by_estado = {
+        e: db.query(Order).filter(Order.estado == e).count()
+        for e in ["pendiente", "pagado", "preparando", "enviado", "entregado", "cancelado"]
+    }
+
+    return {
+        "total_products": total_products,
+        "total_orders": total_orders,
+        "orders_today": orders_today,
+        "revenue_month": round(revenue_month, 2),
+        "pending_orders": pending,
+        "products_sin_imagen": sin_imagen,
+        "orders_by_estado": orders_by_estado,
+    }
+
+
+# ── Admin — Configuración de la tienda ───────────────────────────────────────
+
+class ConfigRequest(BaseModel):
+    tienda_nombre: str | None = None
+    tienda_telefono: str | None = None
+    tienda_ciudad: str | None = None
+    tienda_direccion: str | None = None
+    tienda_horario: str | None = None
+    iban: str | None = None
+    email_admin: str | None = None
+    smtp_host: str | None = None
+    smtp_port: str | None = None
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    email_from: str | None = None
+    envio_gratis_desde: str | None = None
+    precio_envio_estandar: str | None = None
+    precio_envio_pesado: str | None = None
+
+
+@app.get("/api/admin/configuracion")
+def admin_get_config(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Devuelve todos los ajustes de la tienda. Los campos cifrados se devuelven descifrados."""
+    result = {}
+    for s in db.query(StoreSetting).all():
+        result[s.key] = decrypt_if_encrypted(s.value, s.encrypted)
+    return result
+
+
+@app.put("/api/admin/configuracion")
+def admin_update_config(
+    data: ConfigRequest,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Guarda los ajustes. Cifra automáticamente los campos sensibles."""
+    updates = data.model_dump(exclude_none=True)
+    for key, raw_value in updates.items():
+        stored, is_enc = encrypt_if_sensitive(key, str(raw_value))
+        row = db.query(StoreSetting).filter(StoreSetting.key == key).first()
+        if row:
+            row.value = stored
+            row.encrypted = is_enc
+        else:
+            db.add(StoreSetting(key=key, value=stored, encrypted=is_enc))
+    db.commit()
+    logger.info(f"Configuración actualizada: {list(updates.keys())}")
+    return {"ok": True, "actualizados": list(updates.keys())}
+
+
+# ── Público — Info de la tienda (IBAN para transferencias) ───────────────────
+
+def _get_setting(db: Session, key: str, fallback: str = "") -> str:
+    s = db.query(StoreSetting).filter(StoreSetting.key == key).first()
+    if not s or s.value is None:
+        return fallback
+    return decrypt_if_encrypted(s.value, s.encrypted) or fallback
+
+
+@app.get("/api/tienda/info")
+def tienda_info(db: Session = Depends(get_db)):
+    """
+    Datos públicos de la tienda: nombre, teléfono, IBAN (para transferencias).
+    El IBAN se sirve descifrado solo en este endpoint — el frontend lo muestra enmascarado.
+    """
+    return {
+        "nombre":    _get_setting(db, "tienda_nombre",   os.getenv("TIENDA_NOMBRE", "NomasHumedades")),
+        "telefono":  _get_setting(db, "tienda_telefono", os.getenv("TIENDA_TELEFONO", "")),
+        "iban":      _get_setting(db, "iban",            os.getenv("IBAN", "")),
+        "ciudad":    _get_setting(db, "tienda_ciudad",   "Chiclana de la Frontera, Cádiz"),
+        "horario":   _get_setting(db, "tienda_horario",  "Lunes a Viernes: 9:00 - 18:00"),
+        "direccion": _get_setting(db, "tienda_direccion", ""),
+    }
+
+
+# ── Admin — Subir PDFs de catálogos ──────────────────────────────────────────
+
+@app.post("/api/admin/upload-pdf")
+async def upload_pdf(
+    file: UploadFile = File(...),
+    _: User = Depends(require_admin),
+):
+    """Sube un PDF al directorio de catálogos para poder importarlo desde el panel."""
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Solo se aceptan archivos PDF (.pdf)")
+
+    contents = await file.read()
+    if len(contents) > 50 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="PDF demasiado grande (máx 50 MB)")
+
+    catalogos_dir = os.path.abspath(MARCAS_DIR)
+    os.makedirs(catalogos_dir, exist_ok=True)
+
+    safe_name = _re.sub(r"[^a-zA-Z0-9._-]", "_", file.filename)
+    filepath = os.path.join(catalogos_dir, safe_name)
+
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    size_mb = round(len(contents) / (1024 * 1024), 2)
+    logger.info(f"PDF subido por admin: {safe_name} ({size_mb} MB)")
+    return {"filename": safe_name, "size_mb": size_mb, "path": filepath}
+
+
+@app.get("/api/admin/pdfs")
+def admin_list_pdfs(_: User = Depends(require_admin)):
+    """Lista los PDFs disponibles en el directorio de catálogos."""
+    catalogos_dir = os.path.abspath(MARCAS_DIR)
+    if not os.path.isdir(catalogos_dir):
+        return []
+    pdfs = []
+    for fname in os.listdir(catalogos_dir):
+        if fname.lower().endswith(".pdf"):
+            fpath = os.path.join(catalogos_dir, fname)
+            size_mb = round(os.path.getsize(fpath) / (1024 * 1024), 2)
+            pdfs.append({"filename": fname, "size_mb": size_mb})
+    return sorted(pdfs, key=lambda x: x["filename"])
 
 
 @app.get("/api/admin/actualizar-imagenes/estado")
