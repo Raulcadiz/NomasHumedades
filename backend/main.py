@@ -1061,6 +1061,123 @@ def admin_update_order_status(
     return {"order_id": order_id, "estado": estado}
 
 
+# ── Admin — Diagnóstico de conectividad del scraper ──────────────────────────
+@app.get("/api/admin/test-web")
+def admin_test_web(_: User = Depends(require_admin)):
+    """Comprueba si el VPS puede acceder a las webs de las marcas."""
+    import socket
+    results = {}
+    urls = {
+        "valentine.es":    "https://www.valentine.es/",
+        "kerakoll.com":    "https://www.kerakoll.com/",
+        "higaltor.es":     "https://higaltor.es/",
+        "leroymerlin.es":  "https://www.leroymerlin.es/",
+    }
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0",
+        "Accept": "text/html",
+    }
+    for name, url in urls.items():
+        try:
+            import requests as _req
+            r = _req.get(url, timeout=10, headers=headers, allow_redirects=True)
+            results[name] = {"status": r.status_code, "ok": r.status_code < 400}
+        except Exception as e:
+            results[name] = {"status": 0, "ok": False, "error": str(e)[:80]}
+    return results
+
+
+# ── Admin — CSV masivo de imágenes ────────────────────────────────────────────
+@app.get("/api/admin/productos/sin-imagen/csv")
+def admin_export_sin_imagen(
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """Descarga CSV con productos sin imagen para rellenar manualmente."""
+    from fastapi.responses import StreamingResponse
+    import io, csv
+
+    PLACEHOLDER = {"/img/placeholder.jpg", "/img/placeholder.svg", "", None}
+    productos = [p for p in db.query(Product).all() if p.imagen in PLACEHOLDER]
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["id", "nombre", "marca", "referencia", "imagen_url"])
+    for p in productos:
+        writer.writerow([p.id, p.nombre, p.marca, p.referencia or "", ""])
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=productos_sin_imagen.csv"},
+    )
+
+
+class ImportarImagenesCSVRequest(BaseModel):
+    # Lista de dicts: {id: str, imagen_url: str}
+    productos: list[dict]
+
+
+@app.post("/api/admin/productos/importar-imagenes")
+async def admin_importar_imagenes_bulk(
+    data: ImportarImagenesCSVRequest,
+    background_tasks: BackgroundTasks,
+    _: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Asigna imagen_url a una lista de productos.
+    Puede ser URL externa o se descarga y guarda en /uploads/.
+    """
+    uploads_dir = os.path.abspath(UPLOADS_DIR)
+    actualizados = 0
+    errores = []
+
+    for item in data.productos:
+        pid = item.get("id", "").strip()
+        url = item.get("imagen_url", "").strip()
+        if not pid or not url:
+            continue
+
+        product = db.query(Product).filter(Product.id == pid).first()
+        if not product:
+            errores.append(f"{pid}: no encontrado")
+            continue
+
+        # Si es URL externa, intentar descargarla
+        if url.startswith("http"):
+            try:
+                import requests as _req
+                r = _req.get(url, timeout=15, stream=True)
+                r.raise_for_status()
+                content_type = r.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+                ext_map = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+                ext = ext_map.get(content_type, "jpg")
+                safe_id = _re.sub(r"[^a-z0-9-]", "-", pid.lower())
+                filename = f"{safe_id}.{ext}"
+                filepath = os.path.join(uploads_dir, filename)
+                content = r.content
+                if len(content) > 5000:  # Imagen real
+                    with open(filepath, "wb") as f:
+                        f.write(content)
+                    product.imagen = f"/uploads/{filename}"
+                    actualizados += 1
+                else:
+                    product.imagen = url  # Usar URL directa si descarga falla
+                    actualizados += 1
+            except Exception as e:
+                product.imagen = url  # Fallback: URL externa directa
+                actualizados += 1
+        else:
+            product.imagen = url
+            actualizados += 1
+
+    db.commit()
+    logger.info(f"Imágenes importadas en bulk: {actualizados} actualizadas")
+    return {"actualizados": actualizados, "errores": errores}
+
+
 # ── Admin — Subir imágenes ────────────────────────────────────────────────────
 @app.post("/api/admin/upload-image")
 async def upload_image(

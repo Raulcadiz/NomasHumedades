@@ -224,6 +224,13 @@ export default function Admin() {
   const [pdfList, setPdfList] = useState([]);
   const [uploadingPdf, setUploadingPdf] = useState(false);
 
+  // ── Test web / CSV imágenes ──────────────────────────────────────────────────
+  const [testWebResult, setTestWebResult] = useState(null);
+  const [testWebLoading, setTestWebLoading] = useState(false);
+  const [csvImagenes, setCsvImagenes] = useState("");
+  const [csvResult, setCsvResult] = useState(null);
+  const [csvLoading, setCsvLoading] = useState(false);
+
   // ── Scraper web ─────────────────────────────────────────────────────────────
   const [scraperMarca, setScraperMarca] = useState("todas");
   const [scraperSoloSin, setScraperSoloSin] = useState(true);
@@ -494,6 +501,75 @@ export default function Admin() {
     setScraperLoading(false);
   };
 
+  // ── Test web ─────────────────────────────────────────────────────────────────
+  const testWeb = async () => {
+    setTestWebLoading(true);
+    setTestWebResult(null);
+    const res = await apiFetch("/api/admin/test-web");
+    if (res.ok) setTestWebResult(await res.json());
+    setTestWebLoading(false);
+  };
+
+  // ── CSV masivo de imágenes ────────────────────────────────────────────────
+  const descargarCsvSinImagen = () => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : "";
+    const url = `${typeof window !== "undefined" ? (process.env.NEXT_PUBLIC_API_URL || "") : ""}/api/admin/productos/sin-imagen/csv`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "productos_sin_imagen.csv";
+    // Fetch con auth para descargar
+    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.blob())
+      .then(blob => {
+        const objUrl = URL.createObjectURL(blob);
+        a.href = objUrl;
+        a.click();
+        URL.revokeObjectURL(objUrl);
+      });
+  };
+
+  const importarImagenesCSV = async () => {
+    if (!csvImagenes.trim()) { alert("Pega el CSV primero"); return; }
+    setCsvLoading(true);
+    setCsvResult(null);
+    try {
+      // Parsear CSV: id,nombre,marca,referencia,imagen_url
+      const lines = csvImagenes.trim().split("\n");
+      const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+      const idIdx  = headers.indexOf("id");
+      const urlIdx = headers.indexOf("imagen_url");
+      if (idIdx < 0 || urlIdx < 0) {
+        alert("El CSV debe tener columnas 'id' e 'imagen_url'");
+        setCsvLoading(false);
+        return;
+      }
+      const productos = lines.slice(1)
+        .map(line => {
+          const cols = line.split(",").map(c => c.trim());
+          return { id: cols[idIdx], imagen_url: cols[urlIdx] };
+        })
+        .filter(p => p.id && p.imagen_url);
+
+      if (productos.length === 0) { alert("No hay filas con imagen_url rellena"); setCsvLoading(false); return; }
+      const res = await apiFetch("/api/admin/productos/importar-imagenes", {
+        method: "POST",
+        body: JSON.stringify({ productos }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCsvResult(data);
+        await loadProducts();
+        await loadImgEstado();
+        await loadStats();
+      } else {
+        alert("Error al importar imágenes");
+      }
+    } catch (e) {
+      alert("Error al procesar CSV: " + e.message);
+    }
+    setCsvLoading(false);
+  };
+
   const refrescarEstadoImagenes = async () => {
     setRefreshingEstado(true);
     await loadImgEstado();
@@ -571,6 +647,7 @@ export default function Admin() {
             ["margenes",   "💰 Márgenes"],
             ["importar",   "📄 Importar PDFs"],
             ["scraper",    "🌐 Actualizar Web"],
+            ["imagenes",   "🖼️ Imágenes CSV"],
             ["config",     "⚙️ Configuración"],
             ["add",        "➕ Añadir Producto"],
           ].map(([key, label]) => (
@@ -1086,6 +1163,125 @@ export default function Admin() {
                 también puedes editar cada producto manualmente (pestaña Productos → Editar) y pegar la URL
                 de la imagen desde la web del fabricante.
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── IMÁGENES CSV ── */}
+        {activeTab === "imagenes" && (
+          <div style={{ maxWidth: "780px" }}>
+
+            {/* Test de conectividad */}
+            <div className="card" style={{ padding: "24px", marginBottom: "20px" }}>
+              <h3 style={{ marginTop: 0, marginBottom: "8px", fontSize: "16px" }}>🔌 Test de conectividad</h3>
+              <p style={{ color: "#6b7280", fontSize: "13px", marginBottom: "14px" }}>
+                Comprueba si el servidor puede acceder a las webs de las marcas. Si devuelven error,
+                el scraper automático no funcionará desde el VPS.
+              </p>
+              <button onClick={testWeb} disabled={testWebLoading} style={{
+                padding: "9px 18px", background: "#1e3a5f", color: "white",
+                border: "none", borderRadius: "7px", cursor: testWebLoading ? "not-allowed" : "pointer",
+                fontSize: "13px", fontWeight: 600,
+              }}>
+                {testWebLoading ? "Probando…" : "Probar conectividad"}
+              </button>
+              {testWebResult && (
+                <div style={{ marginTop: "14px", display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                  {Object.entries(testWebResult).map(([site, r]) => (
+                    <div key={site} style={{
+                      padding: "8px 14px", borderRadius: "8px",
+                      background: r.ok ? "#d1fae5" : "#fee2e2",
+                      border: `1px solid ${r.ok ? "#6ee7b7" : "#fca5a5"}`,
+                      fontSize: "13px",
+                    }}>
+                      <span style={{ fontWeight: 700 }}>{site}</span>{" "}
+                      {r.ok
+                        ? <span style={{ color: "#065f46" }}>✅ {r.status}</span>
+                        : <span style={{ color: "#dc2626" }}>❌ {r.status || r.error}</span>
+                      }
+                    </div>
+                  ))}
+                </div>
+              )}
+              {testWebResult && Object.values(testWebResult).some(r => !r.ok) && (
+                <div style={{ marginTop: "12px", padding: "12px 16px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: "8px", fontSize: "13px", color: "#92400e" }}>
+                  <strong>Algunas webs bloquean el servidor.</strong> Usa el método CSV manual más abajo para asignar imágenes.
+                </div>
+              )}
+            </div>
+
+            {/* Instrucciones */}
+            <div className="card" style={{ padding: "24px", marginBottom: "20px", background: "#eff6ff", border: "1px solid #bfdbfe" }}>
+              <h3 style={{ marginTop: 0, marginBottom: "12px", fontSize: "16px", color: "#1e40af" }}>📋 Cómo usar el importador CSV</h3>
+              <ol style={{ margin: 0, paddingLeft: "20px", fontSize: "13px", color: "#1e40af", lineHeight: 2 }}>
+                <li><strong>Descarga el CSV</strong> con todos los productos sin imagen</li>
+                <li>Abre el CSV en Excel o Google Sheets</li>
+                <li>Para cada producto, busca la imagen en la web de la marca (Valentine, Kerakoll…)</li>
+                <li>Copia la URL de la imagen y pégala en la columna <code>imagen_url</code></li>
+                <li><strong>Pega aquí el CSV modificado</strong> y pulsa Importar</li>
+              </ol>
+              <div style={{ marginTop: "14px", display: "flex", gap: "10px", flexWrap: "wrap" }}>
+                <button onClick={descargarCsvSinImagen} style={{
+                  padding: "9px 18px", background: "#1d4ed8", color: "white",
+                  border: "none", borderRadius: "7px", cursor: "pointer", fontSize: "13px", fontWeight: 600,
+                }}>
+                  ⬇️ Descargar CSV sin imagen ({imgEstado ? Object.values(imgEstado).reduce((s, v) => s + v.sin_imagen, 0) : "?"} productos)
+                </button>
+                <a href="https://www.valentine.es" target="_blank" rel="noreferrer"
+                  style={{ padding: "9px 14px", background: "#fee2e2", color: "#b91c1c", borderRadius: "7px", fontSize: "13px", fontWeight: 600, textDecoration: "none" }}>
+                  🔗 valentine.es
+                </a>
+                <a href="https://www.kerakoll.com/es" target="_blank" rel="noreferrer"
+                  style={{ padding: "9px 14px", background: "#dbeafe", color: "#1d4ed8", borderRadius: "7px", fontSize: "13px", fontWeight: 600, textDecoration: "none" }}>
+                  🔗 kerakoll.com
+                </a>
+                <a href="https://higaltor.es" target="_blank" rel="noreferrer"
+                  style={{ padding: "9px 14px", background: "#d1fae5", color: "#065f46", borderRadius: "7px", fontSize: "13px", fontWeight: 600, textDecoration: "none" }}>
+                  🔗 higaltor.es
+                </a>
+              </div>
+            </div>
+
+            {/* Importar CSV */}
+            <div className="card" style={{ padding: "24px" }}>
+              <h3 style={{ marginTop: 0, marginBottom: "8px", fontSize: "16px" }}>📥 Importar imágenes desde CSV</h3>
+              <p style={{ color: "#6b7280", fontSize: "13px", marginBottom: "14px" }}>
+                Pega aquí el CSV modificado. Solo necesitas las columnas <code>id</code> e <code>imagen_url</code> rellenas.
+                Las imágenes se descargan y guardan en el servidor automáticamente.
+              </p>
+              <textarea
+                value={csvImagenes}
+                onChange={(e) => setCsvImagenes(e.target.value)}
+                placeholder={"id,nombre,marca,referencia,imagen_url\nval-a0188,Pliolite F500,Valentine,A0188,https://www.valentine.es/wp-content/uploads/.../producto.jpg\n..."}
+                rows={10}
+                style={{ width: "100%", padding: "10px 12px", border: "1px solid #e5e7eb", borderRadius: "8px", fontSize: "12px", fontFamily: "monospace", boxSizing: "border-box", resize: "vertical" }}
+              />
+              <div style={{ display: "flex", gap: "12px", alignItems: "center", marginTop: "12px" }}>
+                <button onClick={importarImagenesCSV} disabled={csvLoading} style={{
+                  padding: "10px 22px", background: csvLoading ? "#9ca3af" : "#059669",
+                  color: "white", border: "none", borderRadius: "8px",
+                  cursor: csvLoading ? "not-allowed" : "pointer", fontSize: "14px", fontWeight: 700,
+                }}>
+                  {csvLoading ? "Importando…" : "Importar imágenes"}
+                </button>
+                <button onClick={() => setCsvImagenes("")} style={{
+                  padding: "10px 14px", background: "white", color: "#6b7280",
+                  border: "1px solid #e5e7eb", borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+                }}>
+                  Limpiar
+                </button>
+              </div>
+              {csvResult && (
+                <div style={{ marginTop: "14px", padding: "12px 16px", background: "#d1fae5", border: "1px solid #6ee7b7", borderRadius: "8px" }}>
+                  <strong>✅ {csvResult.actualizados} productos actualizados</strong>
+                  {csvResult.errores?.length > 0 && (
+                    <div style={{ fontSize: "12px", color: "#dc2626", marginTop: "6px" }}>
+                      {csvResult.errores.slice(0, 5).join(" · ")}
+                      {csvResult.errores.length > 5 && ` (+${csvResult.errores.length - 5} más)`}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
