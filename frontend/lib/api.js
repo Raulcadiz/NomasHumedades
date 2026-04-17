@@ -51,8 +51,10 @@ export function clearSession() {
 // ── Helpers de fetch ──────────────────────────────────────────────────────────
 
 export async function apiFetch(path, options = {}) {
+  // Si el body es FormData, NO poner Content-Type (el navegador lo pone con el boundary correcto)
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
   const headers = {
-    "Content-Type": "application/json",
+    ...(isFormData ? {} : { "Content-Type": "application/json" }),
     ...getAuthHeaders(),
     ...(options.headers || {}),
   };

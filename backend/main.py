@@ -1252,6 +1252,8 @@ def admin_actualizar_imagenes(
         db2 = SessionLocal()
         try:
             actualizados = 0
+            precios_ok = 0
+            descs_ok = 0
             for prod_data in productos_a_procesar:
                 result = web_scraper.actualizar_imagen_producto(
                     product_id=prod_data["id"],
@@ -1265,8 +1267,17 @@ def admin_actualizar_imagenes(
                     if p:
                         p.imagen = result.imagen
                         actualizados += 1
+                        if result.descripcion and (not p.descripcion or len(p.descripcion) < 20):
+                            p.descripcion = result.descripcion
+                            descs_ok += 1
+                        if result.precio and p.precio == 0:
+                            p.precio = result.precio
+                            precios_ok += 1
             db2.commit()
-            logger.info(f"Scraper finalizado: {actualizados}/{len(productos_a_procesar)} imágenes actualizadas")
+            logger.info(
+                f"Scraper finalizado: {actualizados}/{len(productos_a_procesar)} imágenes, "
+                f"{precios_ok} precios, {descs_ok} descripciones actualizadas"
+            )
         except Exception as exc:
             logger.error(f"Error en scraper de imágenes: {exc}")
             db2.rollback()
