@@ -230,6 +230,7 @@ export default function Admin() {
   const [scraperLoading, setScraperLoading] = useState(false);
   const [scraperResult, setScraperResult] = useState(null);
   const [imgEstado, setImgEstado] = useState(null);
+  const [refreshingEstado, setRefreshingEstado] = useState(false);
 
   // ── Nuevo producto ───────────────────────────────────────────────────────────
   const [newProduct, setNewProduct] = useState({
@@ -494,8 +495,11 @@ export default function Admin() {
   };
 
   const refrescarEstadoImagenes = async () => {
+    setRefreshingEstado(true);
     await loadImgEstado();
     await loadProducts();
+    await loadStats();
+    setRefreshingEstado(false);
   };
 
   // ── Pantalla de carga ────────────────────────────────────────────────────────
@@ -1055,11 +1059,12 @@ export default function Admin() {
                 }}>
                   {scraperLoading ? "Iniciando…" : "Actualizar imágenes"}
                 </button>
-                <button onClick={refrescarEstadoImagenes} style={{
-                  padding: "10px 16px", background: "white", color: "#374151",
-                  border: "1px solid #e5e7eb", borderRadius: "8px", cursor: "pointer", fontSize: "13px",
+                <button onClick={refrescarEstadoImagenes} disabled={refreshingEstado} style={{
+                  padding: "10px 16px", background: "white", color: refreshingEstado ? "#9ca3af" : "#374151",
+                  border: "1px solid #e5e7eb", borderRadius: "8px",
+                  cursor: refreshingEstado ? "not-allowed" : "pointer", fontSize: "13px",
                 }}>
-                  Refrescar estado
+                  {refreshingEstado ? "⏳ Actualizando…" : "🔄 Refrescar estado"}
                 </button>
               </div>
 
