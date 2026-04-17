@@ -265,7 +265,10 @@ export default function Admin() {
 
   const loadConfig = useCallback(async () => {
     const res = await apiFetch("/api/admin/configuracion");
-    if (res.ok) setConfig(c => ({ ...c, ...await res.json() }));
+    if (res.ok) {
+      const data = await res.json();
+      setConfig(c => ({ ...c, ...data }));
+    }
   }, []);
 
   const loadPdfList = useCallback(async () => {
